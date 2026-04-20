@@ -1,31 +1,40 @@
 [Defines]
-  INF_VERSION                    = 0x00010005
-  BASE_NAME                      = Hook
-  FILE_GUID                      = 42079f2d-883a-4934-9842-839556d11624
-  MODULE_TYPE                    = UEFI_APPLICATION
-  VERSION_STRING                 = 1.0
-  ENTRY_POINT                    = UefiMain
+  INF_VERSION    = 0x0001001B
+  BASE_NAME      = Hook
+  FILE_GUID      = 42079f2d-883a-4934-9842-839556d11624
+  MODULE_TYPE    = DXE_RUNTIME_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT    = HookEntryPoint
 
 [Sources]
   Hook.c
-  IoInitSystem_Trampoline.nasm
 
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
 
 [LibraryClasses]
-  UefiApplicationEntryPoint
+  UefiDriverEntryPoint
   UefiLib
-  BaseLib
   UefiBootServicesTableLib
-  DebugLib
   UefiRuntimeServicesTableLib
-  PrintLib
+  DevicePathLib
+  MemoryAllocationLib
+  BaseMemoryLib
+  BaseLib
+  DebugLib
+  IoLib
 
 [Protocols]
   gEfiLoadedImageProtocolGuid
-  gEfiDevicePathFromTextProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
 
 [Guids]
+  gEfiEventVirtualAddressChangeGuid
   gEfiEventExitBootServicesGuid
+
+[Depex]
+  TRUE
+
+[BuildOptions]
+  GCC:*_*_*_CC_FLAGS = -Wno-error

