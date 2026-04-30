@@ -8,6 +8,7 @@
 
 [Sources]
   Hook.c
+  MmLoadSystemImageHook.s
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -24,6 +25,8 @@
   BaseLib
   DebugLib
   IoLib
+  UefiRuntimeLib
+  UefiRuntimeServicesTableLib
 
 [Protocols]
   gEfiLoadedImageProtocolGuid
@@ -34,7 +37,9 @@
   gEfiEventExitBootServicesGuid
 
 [Depex]
-  TRUE
+  gEfiRuntimeArchProtocolGuid AND
+  gEfiVariableArchProtocolGuid
 
 [BuildOptions]
-  GCC:*_*_*_CC_FLAGS = -Wno-error
+  GCC:*_*_X64_CC_FLAGS  = -Wno-error
+  GCC:*_*_X64_ASM_FLAGS = -x assembler-with-cpp
