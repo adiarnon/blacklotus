@@ -9,14 +9,24 @@
 
 #define COM1_PORT 0x3F8
 
-// הגדרת UNICODE_STRING של ווינדוס (לא קיימת ב-EDK2)
+typedef enum {
+    MmNonCached = 0,
+    MmCached = 1,
+    MmWriteCombined = 2,
+    MmHardwareCoherentCached = 3,
+    MmNonCachedUnorderedWriteCombined = 4,
+    MmUSWCCached = 5
+} MEMORY_CACHING_TYPE;
+
+typedef VOID* (EFIAPI *MM_MAP_IO_SPACE)(PHYSICAL_ADDRESS PhysicalAddress, UINTN NumberOfBytes, MEMORY_CACHING_TYPE CacheType);
+typedef VOID (EFIAPI *MM_UNMAP_IO_SPACE)(VOID* BaseAddress, UINTN NumberOfBytes);
+
 typedef struct _UNICODE_STRING {
     UINT16 Length;
     UINT16 MaximumLength;
     CHAR16* Buffer;
 } UNICODE_STRING, *PUNICODE_STRING;
 
-// מבנה הדרייברים (החלפתי Flink ב-ForwardLink כדי להתאים ל-EDK2)
 typedef struct _KLDR_DATA_TABLE_ENTRY {
     LIST_ENTRY InLoadOrderLinks;
     VOID* ExceptionTable;
@@ -56,5 +66,14 @@ typedef struct _LOADER_PARAMETER_BLOCK {
     LIST_ENTRY CoreExtensionsDriverListHead;
     LIST_ENTRY TpmCoreDriverListHead;
 } LOADER_PARAMETER_BLOCK, *PLOADER_PARAMETER_BLOCK;
+
+typedef struct _KEYBOARD_INPUT_DATA {
+    UINT16 UnitId;
+    UINT16 MakeCode;
+    UINT16 Flags;
+    UINT16 Reserved;
+    UINT32 ExtraInformation;
+} KEYBOARD_INPUT_DATA;
+
 
 #endif
