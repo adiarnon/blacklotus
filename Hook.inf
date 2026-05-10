@@ -9,6 +9,7 @@
 [Sources]
   Hook.c
   MmLoadSystemImageHook.s
+  MyKeyboardCallbackHook.s
 
 [Packages]
   MdePkg/MdePkg.dec

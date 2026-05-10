@@ -8,6 +8,8 @@
                                                   (UINT64)(&((type *)0)->field)))
 
 #define COM1_PORT 0x3F8
+#define KEY_MAKE                       0
+
 
 typedef enum {
     MmNonCached = 0,
@@ -20,6 +22,7 @@ typedef enum {
 
 typedef VOID* (EFIAPI *MM_MAP_IO_SPACE)(PHYSICAL_ADDRESS PhysicalAddress, UINTN NumberOfBytes, MEMORY_CACHING_TYPE CacheType);
 typedef VOID (EFIAPI *MM_UNMAP_IO_SPACE)(VOID* BaseAddress, UINTN NumberOfBytes);
+typedef VOID *PVOID;
 
 typedef struct _UNICODE_STRING {
     UINT16 Length;
@@ -75,5 +78,43 @@ typedef struct _KEYBOARD_INPUT_DATA {
     UINT32 ExtraInformation;
 } KEYBOARD_INPUT_DATA;
 
+// Source - https://stackoverflow.com/a/61192565
+// Posted by jonathan
+// Retrieved 2026-05-09, License - CC BY-SA 4.0
+
+char kbd_US [128] =
+{
+    0,  27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',   
+  '\t', /* <-- Tab */
+  'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',     
+    0, /* <-- control key */
+  'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',  0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/',   0,
+  '*',
+    0,  /* Alt */
+  ' ',  /* Space bar */
+    0,  /* Caps lock */
+    0,  /* 59 - F1 key ... > */
+    0,   0,   0,   0,   0,   0,   0,   0,
+    0,  /* < ... F10 */
+    0,  /* 69 - Num lock*/
+    0,  /* Scroll Lock */
+    0,  /* Home key */
+    0,  /* Up Arrow */
+    0,  /* Page Up */
+  '-',
+    0,  /* Left Arrow */
+    0,
+    0,  /* Right Arrow */
+  '+',
+    0,  /* 79 - End key*/
+    0,  /* Down Arrow */
+    0,  /* Page Down */
+    0,  /* Insert Key */
+    0,  /* Delete Key */
+    0,   0,   0,
+    0,  /* F11 Key */
+    0,  /* F12 Key */
+    0,  /* All other keys are undefined */
+};
 
 #endif
