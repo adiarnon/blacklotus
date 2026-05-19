@@ -8,6 +8,7 @@
 
 [Sources]
   Hook.c
+  Hook.h
   MmLoadSystemImageHook.s
   MyKeyboardCallbackHook.s
 

