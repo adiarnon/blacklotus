@@ -11,6 +11,8 @@
   Hook.h
   Main.c
   Main.h
+  Kernel.c
+  Kernel.h
   MmLoadSystemImageHook.s
   MyKeyboardCallbackHook.s
 

